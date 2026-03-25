@@ -12,7 +12,11 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const secret = process.env.CRON_SECRET
+  if (secret && req.headers.get('authorization') !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
   try {
     const season = await getOne<Season>(
       `SELECT * FROM seasons WHERE status = 'active' LIMIT 1`
