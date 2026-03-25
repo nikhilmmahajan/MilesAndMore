@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 
     const name = `${athlete.firstname} ${athlete.lastname}`
     const stravaUrl = `https://www.strava.com/athletes/${athlete.id}`
-    const gender = athlete.sex === 'M' ? 'M' : 'F'
+    const gender = athlete.sex === 'M' ? 'M' : athlete.sex === 'F' ? 'F' : null
 
     const result = await query<{ id: string }>(
       `INSERT INTO users (strava_id, name, photo_url, gender, strava_url, strava_access_token, strava_refresh_token, strava_token_expires_at)
