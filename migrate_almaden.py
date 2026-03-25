@@ -273,22 +273,30 @@ def import_users(sh, conn, dry_run=False) -> tuple[dict, dict]:
 
     upsert(conn, "users", records, "strava_id", dry_run)
 
-    name_map: dict[str, str] = {}
-    email_map: dict[str, str] = {}
+    name_map: dict[str, str]     = {}
+    email_map: dict[str, str]    = {}
+    strava_id_map: dict[int, str] = {}  # strava_id (int) → user_id
+
     if not dry_run:
-        for u in db_fetch(conn, "SELECT id, name, email FROM users"):
+        for u in db_fetch(conn, "SELECT id, name, email, strava_id FROM users"):
+            uid = str(u["id"])
             if u["name"]:
-                name_map[u["name"]] = str(u["id"])
+                name_map[u["name"]] = uid
             if u["email"]:
-                email_map[u["email"]] = str(u["id"])
+                email_map[u["email"]] = uid
+            if u["strava_id"]:
+                strava_id_map[int(u["strava_id"])] = uid
     else:
         for rec in records:
-            name_map[rec["name"]] = f"DRY-{rec['strava_id']}"
+            uid = f"DRY-{rec['strava_id']}"
+            name_map[rec["name"]] = uid
             if rec["email"]:
-                email_map[rec["email"]] = f"DRY-{rec['strava_id']}"
+                email_map[rec["email"]] = uid
+            if rec["strava_id"]:
+                strava_id_map[int(rec["strava_id"])] = uid
 
     print(f"  ✅ {len(records)} users processed, {len(name_map)} in name map")
-    return name_map, email_map
+    return name_map, email_map, strava_id_map
 
 # ─── PHASE 2: TEAMS ──────────────────────────────────────────────────────────
 # Source: "Team" tab
@@ -296,7 +304,7 @@ def import_users(sh, conn, dry_run=False) -> tuple[dict, dict]:
 # Row 2: Team names (cols B–G = indices 1–6)
 # Row 3+: Member names per column
 
-def import_teams(sh, conn, name_map, dry_run=False) -> dict[str, str]:
+def import_teams(sh, conn, name_map, strava_id_map, dry_run=False) -> dict[str, str]:
     print("\n── Phase 2: Teams ──────────────────────────────────────")
     raw = tab_raw(sh, "Team")
 
@@ -308,6 +316,9 @@ def import_teams(sh, conn, name_map, dry_run=False) -> dict[str, str]:
         "Holy Kohli":          "E8500A",
         "Almaden Bolts":       "C0392B",
     }
+
+    # Labels that appear as section headings in the Team tab — not real member names
+    TEAM_LABEL_ROWS = {"team captains", "core team", "captain", "core"}
 
     # Row index 1 = team names row (0-indexed)
     team_name_row = raw[1] if len(raw) > 1 else []
@@ -323,7 +334,7 @@ def import_teams(sh, conn, name_map, dry_run=False) -> dict[str, str]:
     for row in raw[2:]:
         for col, tname in team_col_map.items():
             m = clean_str(row[col]) if col < len(row) else None
-            if m:
+            if m and m.lower() not in TEAM_LABEL_ROWS:
                 team_members[tname].append(m)
 
     team_records = [
@@ -365,7 +376,7 @@ def import_teams(sh, conn, name_map, dry_run=False) -> dict[str, str]:
 # Source: One tab per week (Jan26, Feb02, ..., Mar16)
 # Columns: Athlete | Time(mins) | Activities | Distance | Elev. Gain | Strava URL | Strava ID
 
-def import_weekly_activities(sh, conn, name_map, dry_run=False):
+def import_weekly_activities(sh, conn, name_map, strava_id_map, dry_run=False):
     print("\n── Phase 3: Weekly Strava Activities ───────────────────")
     total = 0
 
@@ -404,9 +415,16 @@ def import_weekly_activities(sh, conn, name_map, dry_run=False):
             if not mins or mins == 0:
                 continue
 
-            uid = name_map.get(name) or fuzzy_match(name, name_map)
+            # Resolve user: prefer Strava ID (col 6) → name map → fuzzy
+            raw_sid = extract_strava_id(r[6]) if len(r) > 6 else None
+            raw_sid = raw_sid or (extract_strava_id(r[5]) if len(r) > 5 else None)
+            uid = (
+                strava_id_map.get(raw_sid)
+                or name_map.get(name)
+                or fuzzy_match(name, name_map)
+            )
             if not uid:
-                log_error("UNMATCHED_NAME", tab, f"'{name}'")
+                log_error("UNMATCHED_NAME", tab, f"'{name}' (Strava ID={raw_sid})")
                 continue
 
             act_count = clean_int(r[2]) if len(r) > 2 else None
@@ -510,7 +528,7 @@ def import_streak_enrollments(sh, conn, name_map, dry_run=False):
 # Col 8 = "Week start Date" (label like "Feb02") — identifies which week this row is for.
 # The matching weekly column (col 9+) contains the points awarded (50 = done, 0 = not).
 
-def import_streak_submissions(sh, conn, name_map, email_map, dry_run=False):
+def import_streak_submissions(sh, conn, name_map, email_map, strava_id_map, dry_run=False):
     print("\n── Phase 5: Streak Submissions ─────────────────────────")
 
     try:
@@ -541,8 +559,14 @@ def import_streak_submissions(sh, conn, name_map, email_map, dry_run=False):
         email = clean_str(row[6]).lower() if len(row) > 6 and clean_str(row[6]) else None
         name  = clean_str(row[1]) if len(row) > 1 else None
 
+        # Silently skip blank-user rows (sheet has many trailing empty rows)
+        if not email and not name:
+            continue
+
+        raw_sid = extract_strava_id(row[7]) if len(row) > 7 else None
         uid = (
-            email_map.get(email)
+            (strava_id_map.get(raw_sid) if raw_sid else None)
+            or email_map.get(email)
             or (name_map.get(name) if name else None)
             or (fuzzy_match(name, name_map) if name else None)
         )
@@ -798,11 +822,11 @@ def main():
     sh   = open_sheet()
     conn = get_conn() if not dry else None
 
-    name_map, email_map = import_users(sh, conn, dry)
-    import_teams(sh, conn, name_map, dry)
-    import_weekly_activities(sh, conn, name_map, dry)
+    name_map, email_map, strava_id_map = import_users(sh, conn, dry)
+    import_teams(sh, conn, name_map, strava_id_map, dry)
+    import_weekly_activities(sh, conn, name_map, strava_id_map, dry)
     import_streak_enrollments(sh, conn, name_map, dry)
-    import_streak_submissions(sh, conn, name_map, email_map, dry)
+    import_streak_submissions(sh, conn, name_map, email_map, strava_id_map, dry)
     import_cotw(sh, conn, email_map, dry)
     rebuild_score_cache(conn, dry)
     validation_report(conn, dry)
