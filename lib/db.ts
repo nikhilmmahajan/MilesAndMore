@@ -1,4 +1,10 @@
-import { Pool, QueryResult, QueryResultRow } from 'pg'
+import { Pool, QueryResult, QueryResultRow, types } from 'pg'
+
+// Return date/timestamp columns as plain strings instead of JS Date objects.
+// This keeps runtime types consistent with our TypeScript string declarations.
+types.setTypeParser(1082, (val: string) => val)       // DATE        → 'YYYY-MM-DD'
+types.setTypeParser(1114, (val: string) => val)       // TIMESTAMP   → string
+types.setTypeParser(1184, (val: string) => val)       // TIMESTAMPTZ → string
 
 declare global {
   // eslint-disable-next-line no-var
