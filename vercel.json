@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/strava-sync",
+      "schedule": "0 */12 * * *"
+    },
+    {
+      "path": "/api/cron/leaderboard",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/leaderboard-teams",
+      "schedule": "0 14 * * 1"
+    }
+  ]
+}
