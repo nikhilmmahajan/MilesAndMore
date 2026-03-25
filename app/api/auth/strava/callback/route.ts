@@ -4,9 +4,12 @@ import { exchangeCode } from '@/lib/strava/oauth'
 import { query } from '@/lib/db'
 import { setSessionCookie } from '@/lib/auth'
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
+function appUrl(req: NextRequest): string {
+  return process.env.NEXT_PUBLIC_APP_URL ?? `${req.nextUrl.protocol}//${req.nextUrl.host}`
+}
 
 export async function GET(req: NextRequest) {
+  const APP_URL = appUrl(req)
   try {
     const { searchParams } = req.nextUrl
     const code = searchParams.get('code')
