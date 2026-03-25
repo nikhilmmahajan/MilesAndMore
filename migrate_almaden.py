@@ -101,8 +101,13 @@ def db_fetch(conn, sql: str, params=None) -> list[dict]:
         cur.execute(sql, params or [])
         return [dict(r) for r in cur.fetchall()]
 
-def upsert(conn, table: str, records: list[dict], on_conflict: str, dry_run=False):
-    """Batch UPSERT: INSERT ... ON CONFLICT (...) DO UPDATE SET ..."""
+def upsert(conn, table: str, records: list[dict], on_conflict: str,
+           dry_run=False, conflict_where: str = ""):
+    """
+    Batch UPSERT: INSERT ... ON CONFLICT (...) [WHERE ...] DO UPDATE SET ...
+    conflict_where: optional SQL predicate for partial unique indexes,
+                    e.g. "source = 'manual_import'"
+    """
     if not records:
         return
     if dry_run:
@@ -117,11 +122,12 @@ def upsert(conn, table: str, records: list[dict], on_conflict: str, dry_run=Fals
     val_list   = ", ".join(f"%({c})s" for c in cols)
     conflict   = ", ".join(f'"{c}"' for c in conflict_cols)
     update_set = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in update_cols)
+    where_part = f" WHERE {conflict_where}" if conflict_where else ""
 
     sql = (
         f'INSERT INTO "{table}" ({col_list}) VALUES ({val_list}) '
-        + (f"ON CONFLICT ({conflict}) DO UPDATE SET {update_set}"
-           if update_set else f"ON CONFLICT ({conflict}) DO NOTHING")
+        + (f"ON CONFLICT ({conflict}){where_part} DO UPDATE SET {update_set}"
+           if update_set else f"ON CONFLICT ({conflict}){where_part} DO NOTHING")
     )
 
     try:
@@ -368,7 +374,7 @@ def import_teams(sh, conn, name_map, strava_id_map, dry_run=False) -> dict[str, 
                 "is_captain": False, "is_core": False,
             })
 
-    upsert(conn, "team_members", tm_records, "team_id,user_id,season_id", dry_run)
+    upsert(conn, "team_members", tm_records, "user_id,season_id", dry_run)
     print(f"  ✅ {len(team_col_map)} teams, {len(tm_records)} memberships")
     return team_id_map
 
@@ -453,7 +459,8 @@ def import_weekly_activities(sh, conn, name_map, strava_id_map, dry_run=False):
                 "created_at":         now_iso(),
             })
 
-        upsert(conn, "strava_activities", records, "user_id,week_start_date,source", dry_run)
+        upsert(conn, "strava_activities", records, "user_id,week_start_date,source",
+               dry_run, conflict_where="source = 'manual_import'")
         total += len(records)
         print(f"    {tab}: {len(records)} rows")
 

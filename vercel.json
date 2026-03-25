@@ -1,12 +1,10 @@
 {
   "buildCommand": "npm run build",
   "installCommand": "npm install",
-  "framework": "nextjs",
-  "outputDirectory": ".next",
   "crons": [
     {
       "path": "/api/cron/strava-sync",
-      "schedule": "0 */12 * * *"
+      "schedule": "0 0 * * *"
     },
     {
       "path": "/api/cron/leaderboard",
